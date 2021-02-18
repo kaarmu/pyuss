@@ -47,9 +47,19 @@ bu0050 - Parameter set P1-4; ADR[:2]
 bu0050 - read C-36/37
 
 
+Thoughts
+========
+PPO list
+
+ppo = ('PKW PKW PKW PKW PZD PZD PZD PZD'
+       'PKW PKW PKW PKW PZD PZD',
+       'PZD PZD PZD PZD',
+       'PZD PZD')
+
 """
 
-from serial import Serial
+from typing import Union        # Use union operator | in python3.10 instead
+from importlib import reload
 
 TASK_ID = {
     0b0000: "No task",
@@ -87,12 +97,14 @@ class Slave:
 
     """
 
-    pzd = (,)
+    pzd = ()
     pzdHook = None
-    allowedPPO = []
+    ppo = ('PKW PKW PKW PKW PZD PZD PZD PZD',
+           'PKW PKW PKW PKW PZD PZD',
+           'PZD PZD PZD PZD',
+           'PZD PZD')
 
-    def __init__(self, ser: Serial, slaveno: int) -> None:
-        self.ser = ser
+    def __init__(self, slaveno: int) -> None:
 
         assert slaveno < (1 << 5), f'Slave number cant be {1 << 5} or greater.'
         self.slaveno = slaveno
@@ -102,22 +114,25 @@ class Slave:
         pass
 
     def simpleRead(self, paramno: int, index: int) -> None:
-        """Simple read (one word) """
-        ak = 1
+        """Simple read (hardcoded) """
+
         pwes = bytes([0, 0]) # How to deal with this generally?
+        pkw = self._createPKW(1, paramno, index, pwes) + pwes
 
-        pkw = self._createPKW(ak, paramno, index, pwes)
+        assert pzd
+
+        return self.telegram(pkw + bytes(pzd))
 
 
-    def telegram(self, netData: bytes, *, special: bool = False,
-             mirror: bool = False, broadcast: bool = False) -> None:
+    def telegram(self, netData: Union[bytes, str], *, special: bool = False,
+                 mirror: bool = False, broadcast: bool = False) -> None:
         """
         Create a telegram.
         """
-        stx = b'\x02'
+        stx = 0x02
 
         assert len(netData) <= 252, 'Too big payload.'
-        lge = bytes([len(netData) + 2])
+        lge = len(netData) + 2
 
         adr = self.slaveno
         if broadcast: adr |= 1 << 5
@@ -128,7 +143,10 @@ class Slave:
         for byte in netData:
             bcc ^= byte
 
-        return stx + lge + adr + netData + bcc
+        if type(netData) is str:
+            netData = bytes.fromhex(netData)
+
+        return bytes([stx, lge, adr]) + netData + bytes([bcc])
 
     def _createPKW(self, ak: int, paramno: int, index: int, pwes: bytes, *,
             sp: bool = False, rw: int = 0, indexHighByte: int = 0) -> bytes:
@@ -161,7 +179,8 @@ class Slave:
 
         ind = (indexHighByte << 10) | (rw << 8) | index
 
-        return bytes([pke, ind]) + pwes
+        return bytes([pke & 0xff00 >> 8, pke & 0xff,
+                      ind & 0xff00 >> 8, ind & 0xff]) + pwes
 
 
     def _createPZD(self) -> bytes:
